@@ -21,7 +21,6 @@
  */
 
 #include "pins_arduino.h"
-#include "../crc_table.h"
 #include <SPI.h>
 #include <SD.h>
 
@@ -54,6 +53,8 @@ static unsigned char n64_command;
 static unsigned char n64_buffer[33];
 static void get_n64_command();
 static void n64_send();
+
+static bool has_peripheral = false;
 
 // Simple switch buffer. (If buffer A fails to load while buffer B is in use,
 // we still okay, and will try again next loop)
@@ -115,7 +116,6 @@ void setup()
 
 void loop()
 {
-    unsigned char data, addr;
     unsigned long updateTime;
 
     // Loop forever if file open failed
@@ -157,7 +157,7 @@ void loop()
             // it won't work without it.
             n64_buffer[0] = 0x05;
             n64_buffer[1] = 0x00;
-            n64_buffer[2] = 0x01;
+            n64_buffer[2] = has_peripheral ? 0x01 : 0x02;
 
             n64_send(n64_buffer, 3, 0);
             interrupts();
@@ -185,7 +185,7 @@ void loop()
             // Record if it took longer than expected
             updateTime = micros() - updateTime;
             if (updateTime > INPUT_BUFFER_UPDATE_TIMEOUT * 1000) {
-                Serial.print(F("Input buffer update took to long ("));
+                Serial.print(F("Input buffer update took too long ("));
                 Serial.print(updateTime / 1000);
                 Serial.println(F(" ms)"));
             }
@@ -197,8 +197,10 @@ void loop()
 
             // Assume it's a read for 0x8000, which is the only thing it should
             // be requesting anyways
-            memset(n64_buffer, 0x80, 32);
-            n64_buffer[32] = 0xB8; // CRC
+            memset(n64_buffer, has_peripheral ? 0x80 : 0x00, 32);
+            n64_buffer[32] = n64_crc(&n64_buffer[0]);
+            if (!has_peripheral)
+              n64_buffer[32] ^= 0xff;
 
             n64_send(n64_buffer, 33, 1);
             interrupts();
@@ -212,46 +214,16 @@ void loop()
             // rumble! All other write addresses are ignored. (but we still
             // need to return a CRC)
 
-            // decode the first data byte (fourth overall byte), bits indexed
-            // at 24 through 31
-            data = 0;
-            data |= (n64_raw_dump[16] != 0) << 7;
-            data |= (n64_raw_dump[17] != 0) << 6;
-            data |= (n64_raw_dump[18] != 0) << 5;
-            data |= (n64_raw_dump[19] != 0) << 4;
-            data |= (n64_raw_dump[20] != 0) << 3;
-            data |= (n64_raw_dump[21] != 0) << 2;
-            data |= (n64_raw_dump[22] != 0) << 1;
-            data |= (n64_raw_dump[23] != 0);
-
             // get crc byte, invert it, as per the protocol for
             // having a memory card attached
-            n64_buffer[0] = crc_repeating_table[data] ^ 0xFF;
+            n64_buffer[0] = n64_crc(&n64_raw_dump[2]);
+            if (!has_peripheral)
+              n64_buffer[0] ^= 0xff;
 
             // send it
             n64_send(n64_buffer, 1, 1);
             interrupts();
             Serial.println(F("Got a write, what?"));
-
-            // end of time critical code
-            // was the address the rumble latch at 0xC000?
-            // decode the first half of the address, bits
-            // 8 through 15
-            addr = 0;
-            addr |= (n64_raw_dump[0] != 0) << 7;
-            addr |= (n64_raw_dump[1] != 0) << 6;
-            addr |= (n64_raw_dump[2] != 0) << 5;
-            addr |= (n64_raw_dump[3] != 0) << 4;
-            addr |= (n64_raw_dump[4] != 0) << 3;
-            addr |= (n64_raw_dump[5] != 0) << 2;
-            addr |= (n64_raw_dump[6] != 0) << 1;
-            addr |= (n64_raw_dump[7] != 0);
-
-            //Serial.println("It was 0x03: the write command");
-            //Serial.print("Addr was 0x");
-            //Serial.print(addr, HEX);
-            //Serial.print(" and data was 0x");
-            //Serial.println(data, HEX);
             break;
 
         default:
@@ -304,7 +276,7 @@ static bool openM64() {
             break;
         default:
           // Unknown version
-            Serial.println(F("Error: uknown M64 version"));
+            Serial.println(F("Error: unknown M64 version"));
             m64File.close();
             return false;
     }
@@ -665,4 +637,23 @@ read_loop2:
         // wait for line to go high again
         while (!N64_QUERY) {}
         goto read_loop2;
+}
+
+unsigned char n64_crc(unsigned char *data)
+{
+    int i;
+    unsigned char crc = 0;
+    for (i = 0; i <= 32; i++)
+    {
+        int mask;
+        for (mask = 0x80; mask >= 1; mask >>= 1)
+        {
+            int xor_tap = (crc & 0x80) ? 0x85 : 0x00;
+            crc <<= 1;
+            if (i != 0x20 && (data[i] & mask))
+                crc |= 1;
+            crc ^= xor_tap;
+        }
+    }
+    return crc;
 }
