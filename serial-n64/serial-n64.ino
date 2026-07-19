@@ -44,6 +44,8 @@ static unsigned char n64_buffer[33], command_buffer[33];
 static void get_n64_command();
 static void readSerial(bool timeout);
 
+static bool has_peripheral = false;
+
 #include "../crc_table.h"
 
 #include <RingBuf.h>
@@ -347,7 +349,7 @@ void loop()
             // it won't work without it.
             n64_buffer[0] = 0x05;
             n64_buffer[1] = 0x00;
-            n64_buffer[2] = 0x01;
+            n64_buffer[2] = has_peripheral ? 0x01 : 0x02;
 
             n64_send(n64_buffer, 3, 0);
 
@@ -367,8 +369,8 @@ void loop()
 
             // Assume it's a read for 0x8000, which is the only thing it should
             // be requesting anyways
-            memset(n64_buffer, 0x80, 32);
-            n64_buffer[32] = 0xB8; // CRC
+            memset(n64_buffer, has_peripheral ? 0x80 : 0x00, 32);
+            n64_buffer[32] = has_peripheral ? 0xB8 : 0xFF;
 
             n64_send(n64_buffer, 33, 1);
             writeLine("Got a read, what?");
@@ -395,7 +397,9 @@ void loop()
 
             // get crc byte, invert it, as per the protocol for
             // having a memory card attached
-            n64_buffer[0] = crc_repeating_table[data] ^ 0xFF;
+            n64_buffer[0] = crc_repeating_table[data];
+            if (!has_peripheral)
+              n64_buffer[0] ^= 0xFF;
 
             // send it
             n64_send(n64_buffer, 1, 1);

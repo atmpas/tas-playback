@@ -45,7 +45,7 @@
 
 #define INPUT_BUFFER_UPDATE_TIMEOUT 10 // 10 ms
 
-static char n64_raw_dump[38]; // maximum recv is 1+2+32 bytes + 1 bit
+static char n64_raw_dump[281]; // maximum recv is 1+2+32 bytes + 1 bit
 // n64_raw_dump does /not/ include the command byte. That gets pushed into
 // n64_command:
 static unsigned char n64_command;
@@ -54,6 +54,8 @@ static unsigned char n64_command;
 static unsigned char n64_buffer[33];
 static void get_n64_command();
 static void n64_send();
+
+static bool has_peripheral = false;
 
 // Simple switch buffer. (If buffer A fails to load while buffer B is in use,
 // we still okay, and will try again next loop)
@@ -157,7 +159,7 @@ void loop()
             // it won't work without it.
             n64_buffer[0] = 0x05;
             n64_buffer[1] = 0x00;
-            n64_buffer[2] = 0x01;
+            n64_buffer[2] = has_peripheral ? 0x01 : 0x02;
 
             n64_send(n64_buffer, 3, 0);
             interrupts();
@@ -185,7 +187,7 @@ void loop()
             // Record if it took longer than expected
             updateTime = micros() - updateTime;
             if (updateTime > INPUT_BUFFER_UPDATE_TIMEOUT * 1000) {
-                Serial.print(F("Input buffer update took to long ("));
+                Serial.print(F("Input buffer update took too long ("));
                 Serial.print(updateTime / 1000);
                 Serial.println(F(" ms)"));
             }
@@ -197,8 +199,8 @@ void loop()
 
             // Assume it's a read for 0x8000, which is the only thing it should
             // be requesting anyways
-            memset(n64_buffer, 0x80, 32);
-            n64_buffer[32] = 0xB8; // CRC
+            memset(n64_buffer, has_peripheral ? 0x80 : 0x00, 32);
+            n64_buffer[32] = has_peripheral ? 0xB8 : 0xFF;
 
             n64_send(n64_buffer, 33, 1);
             interrupts();
@@ -226,7 +228,9 @@ void loop()
 
             // get crc byte, invert it, as per the protocol for
             // having a memory card attached
-            n64_buffer[0] = crc_repeating_table[data] ^ 0xFF;
+            n64_buffer[0] = crc_repeating_table[data];
+            if (!has_peripheral)
+              n64_buffer[0] ^= 0xFF;
 
             // send it
             n64_send(n64_buffer, 1, 1);
@@ -304,7 +308,7 @@ static bool openM64() {
             break;
         default:
           // Unknown version
-            Serial.println(F("Error: uknown M64 version"));
+            Serial.println(F("Error: unknown M64 version"));
             m64File.close();
             return false;
     }
