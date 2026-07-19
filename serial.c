@@ -32,24 +32,24 @@
 
 #include "config.h"
 
-char dataBuf[INPUT_SIZE * 1024 * 1024 * 8] = {0};
+unsigned char dataBuf[INPUT_SIZE * 1024 * 1024 * 8] = {0};
 
 int writec(int fd, char c)
 {
   write(fd, &c, 1);
 }
 
-void write_7bit(int fd, const char *in, int len)
+void write_7bit(int fd, const unsigned char *in, int len)
 {
-  char out[1024] = {0};
+  unsigned char out[1024] = {0};
   unsigned char check = 0;
   for (int i = 0; i < len; i++) {
-    out[(i * 8) / 7]    |=  in[i] >> 1 + (i % 7);
-    out[(i * 8) / 7 + 1] = (in[i] << 6 - (i % 7)) & 0x7F;
+    out[(i * 8) / 7]    |=  in[i] >> (1 + (i % 7));
+    out[(i * 8) / 7 + 1] = (in[i] << (6 - (i % 7))) & 0x7F;
     check ^= in[i];
   }
-  out[(len * 8) / 7]    |=  check >> 1 + (len % 7);
-  out[(len * 8) / 7 + 1] = (check << 6 - (len % 7)) & 0x7F;
+  out[(len * 8) / 7]    |=  check >> (1 + (len % 7));
+  out[(len * 8) / 7 + 1] = (check << (6 - (len % 7))) & 0x7F;
   write(fd, out, ((len + 1) * 8 + 6) / 7);
 }
 
